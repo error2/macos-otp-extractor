@@ -6,7 +6,7 @@ import AppKit
 import SQLite
 import AVFoundation
 
-// NEW: A struct to hold detailed information about each OTP.
+// A struct to hold detailed information about each OTP.
 struct OTPInfo: Hashable {
     let code: String
     let sender: String
@@ -29,6 +29,8 @@ struct OTPExtractorApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var otpManager: OTPManager?
+    // NEW: State to track if permission has been granted.
+    private var hasPermission: Bool = false
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -40,49 +42,69 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Initialize the OTP manager
         otpManager = OTPManager(statusItem: statusItem)
         
-        // Build the initial menu
-        setupMenu()
-        
-        // Start monitoring for OTPs
-        otpManager?.startMonitoring { [weak self] in
-            // This completion block is called whenever a new OTP is found.
-            // We just need to rebuild the menu to show the new history.
-            DispatchQueue.main.async {
-                self?.setupMenu()
-            }
-        }
-        
-        // Perform an initial check on launch
-        otpManager?.fetchLastOTP()
+        // NEW: Check permissions before starting the main functionality.
+        checkPermissionsAndSetup()
     }
     
+    // NEW: Central function to handle the permission check and app setup.
+    @objc func checkPermissionsAndSetup() {
+        self.hasPermission = otpManager?.hasFullDiskAccess() ?? false
+        
+        if hasPermission {
+            // If permission is granted, start monitoring.
+            otpManager?.startMonitoring { [weak self] in
+                DispatchQueue.main.async {
+                    self?.setupMenu()
+                }
+            }
+            otpManager?.fetchLastOTP()
+        } else {
+            // If permission is denied, show the alert.
+            showPermissionsAlert()
+        }
+        
+        // Always build the menu, which will now reflect the current permission state.
+        setupMenu()
+    }
+    
+    // This function now builds the entire menu dynamically based on the current state.
     @objc func setupMenu() {
         let menu = NSMenu()
 
-        // --- OTP History Section ---
-        if let history = otpManager?.otpHistory, !history.isEmpty {
-            let historyTitle = NSMenuItem(title: "Recent Codes", action: nil, keyEquivalent: "")
-            historyTitle.isEnabled = false
-            menu.addItem(historyTitle)
-            
-            let timeFormatter = DateFormatter()
-            timeFormatter.dateFormat = "h:mm a" // e.g., "4:45 PM"
+        if hasPermission {
+            // --- Full Menu (Permission Granted) ---
+            if let history = otpManager?.otpHistory, !history.isEmpty {
+                let historyTitle = NSMenuItem(title: "Recent Codes", action: nil, keyEquivalent: "")
+                historyTitle.isEnabled = false
+                menu.addItem(historyTitle)
+                
+                let timeFormatter = DateFormatter()
+                timeFormatter.dateFormat = "h:mm a"
 
-            for info in history {
-                let formattedTime = timeFormatter.string(from: info.date)
-                let title = "\(info.code) from \(info.sender) (\(formattedTime))"
-                let historyItem = NSMenuItem(title: title, action: #selector(copyHistoryItem(_:)), keyEquivalent: "")
-                historyItem.representedObject = info.code // Store the raw code here
-                historyItem.target = self
-                menu.addItem(historyItem)
+                for info in history {
+                    let formattedTime = timeFormatter.string(from: info.date)
+                    let title = "\(info.code) from \(info.sender) (\(formattedTime))"
+                    let historyItem = NSMenuItem(title: title, action: #selector(copyHistoryItem(_:)), keyEquivalent: "")
+                    historyItem.representedObject = info.code
+                    historyItem.target = self
+                    menu.addItem(historyItem)
+                }
+                menu.addItem(NSMenuItem.separator())
             }
-            menu.addItem(NSMenuItem.separator())
-        }
 
-        // --- Control Section ---
-        let fetchMenuItem = NSMenuItem(title: "Fetch Last OTP Manually", action: #selector(fetchLastOTPManual), keyEquivalent: "F")
-        fetchMenuItem.target = self
-        menu.addItem(fetchMenuItem)
+            let fetchMenuItem = NSMenuItem(title: "Fetch Last OTP Manually", action: #selector(fetchLastOTPManual), keyEquivalent: "F")
+            fetchMenuItem.target = self
+            menu.addItem(fetchMenuItem)
+        } else {
+            // --- Limited Menu (Permission Denied) ---
+            let permissionTitle = NSMenuItem(title: "Permission Required", action: nil, keyEquivalent: "")
+            permissionTitle.isEnabled = false
+            menu.addItem(permissionTitle)
+            
+            let checkAgainItem = NSMenuItem(title: "Check Permissions Again", action: #selector(checkPermissionsAndSetup), keyEquivalent: "")
+            checkAgainItem.target = self
+            menu.addItem(checkAgainItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
         
@@ -93,9 +115,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
     }
 
-    // Action for when a user clicks a code in the history.
+    // NEW: Function to display the permission request alert.
+    func showPermissionsAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Full Disk Access Required"
+        alert.informativeText = "OTP Extractor needs Full Disk Access to read codes from the Messages app. Please grant permission in System Settings."
+        alert.alertStyle = .warning
+        
+        let openButton = alert.addButton(withTitle: "Open Settings")
+        openButton.target = self
+        openButton.action = #selector(openPrivacySettings)
+        
+        alert.addButton(withTitle: "OK")
+        
+        alert.runModal()
+    }
+    
+    // NEW: Action to open the correct System Settings pane.
+    @objc func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     @objc func copyHistoryItem(_ sender: NSMenuItem) {
-        // NEW: Get the code from the representedObject to avoid parsing the title string.
         if let code = sender.representedObject as? String {
             copyToClipboard(text: code)
             NSSound(named: "Submarine")?.play()
@@ -134,12 +177,22 @@ class OTPManager {
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
         self.dbPath = homeDir.appendingPathComponent("Library/Messages/chat.db").path
         self.statusItem = statusItem
-        self.lastCheckedMessageID = fetchLastMessageID()
-        print("Initialized OTPManager. Last message ID: \(self.lastCheckedMessageID)")
+    }
+    
+    // NEW: A simple check to see if we can read the database file.
+    func hasFullDiskAccess() -> Bool {
+        return FileManager.default.isReadableFile(atPath: dbPath)
     }
 
     func startMonitoring(onUpdate: @escaping () -> Void) {
+        // Only start the timer if it's not already running.
+        guard timer == nil else { return }
+        
         self.onUpdate = onUpdate
+        // Initialize the last checked ID right before we start monitoring.
+        self.lastCheckedMessageID = fetchLastMessageID()
+        print("Monitoring started. Last message ID: \(self.lastCheckedMessageID)")
+        
         timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.fetchLastOTP()
         }
@@ -151,6 +204,7 @@ class OTPManager {
     }
 
     private func fetchLastMessageID() -> Int {
+        guard hasFullDiskAccess() else { return 0 }
         do {
             let db = try Connection(dbPath, readonly: true)
             let messageTable = Table("message")
@@ -166,20 +220,22 @@ class OTPManager {
     }
     
     func fetchLastOTP() {
+        guard hasFullDiskAccess() else {
+            print("Permission denied. Skipping fetch.")
+            return
+        }
         do {
             let db = try Connection(dbPath, readonly: true)
             
-            // FIX: Define tables and columns for the corrected query.
             let messageTable = Table("message")
             let handleTable = Table("handle")
 
             let textCol = Expression<String?>("text")
-            let handleIdCol = Expression<Int>("handle_id") // This column is on the message table itself.
+            let handleIdCol = Expression<Int>("handle_id")
             let dateCol = Expression<Int>("date")
             let handleIdStringCol = Expression<String>("id")
             let rowid = Expression<Int>("ROWID")
 
-            // FIX: This query now directly joins the message and handle tables.
             let query = messageTable
                 .join(handleTable, on: messageTable[handleIdCol] == handleTable[rowid])
                 .select(messageTable[textCol], handleTable[handleIdStringCol], messageTable[dateCol])
@@ -188,11 +244,8 @@ class OTPManager {
 
             var otpInfoFound: OTPInfo?
 
-            // FIX: More robust logic for updating the last checked message ID.
-            // 1. Get the absolute newest message ID before we start.
             let newestIdInDb = fetchLastMessageID()
 
-            // 2. Loop through the new messages to find an OTP.
             for message in try db.prepare(query) {
                 if let text = message[messageTable[textCol]] {
                     if let code = self.extractOTP(from: text) {
@@ -202,18 +255,15 @@ class OTPManager {
                         let date = Date(timeIntervalSince1970: unixEpoch)
                         
                         otpInfoFound = OTPInfo(code: code, sender: sender, date: date)
-                        break // Stop after finding the first OTP.
+                        break
                     }
                 }
             }
             
-            // 3. After checking, update our high-water mark to the newest ID in the database.
-            // This ensures we don't re-check messages we've already seen.
             if newestIdInDb > self.lastCheckedMessageID {
                 self.lastCheckedMessageID = newestIdInDb
             }
 
-            // 4. If we found an OTP, process it.
             if let info = otpInfoFound {
                 print("OTP Found: \(info.code) from \(info.sender)")
                 
