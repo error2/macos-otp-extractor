@@ -22,7 +22,7 @@ This application lives in your macOS menu bar and silently monitors for new mess
 
 For users who don't want to build from source, you can download the pre-compiled application here.
 
-* [**Download OTP Extractor v1.0**](https://github.com/error2/macos-otp-extractor/releases/download/v1.1/OTPExtractor.app.zip)
+* [**Download OTP Extractor v1.1**](https://github.com/error2/macos-otp-extractor/releases/download/v1.1/OTPExtractor.app.zip)
 
 You can also visit the [Releases page](https://github.com/error2/macos-otp-extractor/releases) for all available versions.
 
