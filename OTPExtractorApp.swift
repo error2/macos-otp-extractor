@@ -29,7 +29,6 @@ struct OTPExtractorApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var otpManager: OTPManager?
-    // NEW: State to track if permission has been granted.
     private var hasPermission: Bool = false
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
@@ -39,19 +38,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "key.viewfinder", accessibilityDescription: "OTP Extractor")
         }
 
-        // Initialize the OTP manager
         otpManager = OTPManager(statusItem: statusItem)
         
-        // NEW: Check permissions before starting the main functionality.
         checkPermissionsAndSetup()
     }
     
-    // NEW: Central function to handle the permission check and app setup.
     @objc func checkPermissionsAndSetup() {
         self.hasPermission = otpManager?.hasFullDiskAccess() ?? false
         
         if hasPermission {
-            // If permission is granted, start monitoring.
             otpManager?.startMonitoring { [weak self] in
                 DispatchQueue.main.async {
                     self?.setupMenu()
@@ -59,15 +54,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             otpManager?.fetchLastOTP()
         } else {
-            // If permission is denied, show the alert.
             showPermissionsAlert()
         }
         
-        // Always build the menu, which will now reflect the current permission state.
         setupMenu()
     }
     
-    // This function now builds the entire menu dynamically based on the current state.
     @objc func setupMenu() {
         let menu = NSMenu()
 
@@ -89,6 +81,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     historyItem.target = self
                     menu.addItem(historyItem)
                 }
+                menu.addItem(NSMenuItem.separator())
+                
+                let clearHistoryItem = NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
+                clearHistoryItem.target = self
+                menu.addItem(clearHistoryItem)
+                
                 menu.addItem(NSMenuItem.separator())
             }
 
@@ -115,7 +113,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
     }
 
-    // NEW: Function to display the permission request alert.
     func showPermissionsAlert() {
         let alert = NSAlert()
         alert.messageText = "Full Disk Access Required"
@@ -131,7 +128,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
     
-    // NEW: Action to open the correct System Settings pane.
     @objc func openPrivacySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
             NSWorkspace.shared.open(url)
@@ -144,6 +140,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSSound(named: "Submarine")?.play()
             print("Copied \(code) from history.")
         }
+    }
+    
+    @objc func clearHistory() {
+        otpManager?.clearHistory()
+        setupMenu()
     }
 
     @objc func fetchLastOTPManual() {
@@ -179,17 +180,14 @@ class OTPManager {
         self.statusItem = statusItem
     }
     
-    // NEW: A simple check to see if we can read the database file.
     func hasFullDiskAccess() -> Bool {
         return FileManager.default.isReadableFile(atPath: dbPath)
     }
 
     func startMonitoring(onUpdate: @escaping () -> Void) {
-        // Only start the timer if it's not already running.
         guard timer == nil else { return }
         
         self.onUpdate = onUpdate
-        // Initialize the last checked ID right before we start monitoring.
         self.lastCheckedMessageID = fetchLastMessageID()
         print("Monitoring started. Last message ID: \(self.lastCheckedMessageID)")
         
@@ -201,6 +199,11 @@ class OTPManager {
     func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+    }
+    
+    func clearHistory() {
+        self.otpHistory = []
+        print("OTP history cleared.")
     }
 
     private func fetchLastMessageID() -> Int {
@@ -287,24 +290,39 @@ class OTPManager {
     }
 
     private func extractOTP(from text: String) -> String? {
-        let pattern = #"(?:\b|is: |code is |G-|is )\d{3}[- ]?\d{2,5}\b"#
+        // IMPROVED LOGIC: A more robust two-step process.
+        
+        // Step 1: Check if the message contains any OTP-related keywords. This is a fast way
+        // to discard irrelevant messages without performing complex regex on them.
+        let keywords = ["code", "password", "OTP", "verification", "2FA", "token", "PIN", "קוד", "סיסמה", "אימות", "G-"]
+        let keywordPattern = "(?i)(" + keywords.joined(separator: "|") + ")"
+        
+        guard text.range(of: keywordPattern, options: .regularExpression) != nil else {
+            // No keywords found, so it's not an OTP message.
+            return nil
+        }
+        
+        // Step 2: If a keyword was found, now search for a standalone 5-8 digit number.
+        // `\b` is a "word boundary," which ensures we match whole numbers and not digits
+        // that are part of a longer string (like a phone number or order ID).
+        let numberPattern = #"\b(\d{5,8})\b"#
         
         do {
-            let regex = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+            let regex = try NSRegularExpression(pattern: numberPattern, options: [])
             let range = NSRange(text.startIndex..<text.endIndex, in: text)
             
+            // Find the first standalone number in the message.
             if let match = regex.firstMatch(in: text, options: [], range: range) {
-                if let swiftRange = Range(match.range, in: text) {
-                    let matchedString = String(text[swiftRange])
-                    let digitsOnly = matchedString.filter { "0123456789".contains($0) }
-                    if (5...8).contains(digitsOnly.count) {
-                        return digitsOnly
-                    }
+                // The range at index 0 is the full match for this simple pattern.
+                if let swiftRange = Range(match.range(at: 0), in: text) {
+                    let code = String(text[swiftRange])
+                    return code
                 }
             }
         } catch {
             print("Regex error: \(error.localizedDescription)")
         }
+        
         return nil
     }
 
