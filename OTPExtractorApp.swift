@@ -82,7 +82,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                               willPresent notification: UNNotification,
-                              completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+                              withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
     }
 
@@ -429,8 +429,8 @@ class OTPManager {
             let messageTable = Table("message")
             let rowid = Expression<Int>("ROWID")
 
-            // Fixed: Use .first() instead of .first(where: { _ in true })
-            if let lastMessage = try db.prepare(messageTable.order(rowid.desc).limit(1)).first() {
+            // Fixed: Use makeIterator().next() for SQLite.swift Row sequence
+            if let lastMessage = try db.prepare(messageTable.order(rowid.desc).limit(1)).makeIterator().next() {
                 return lastMessage[rowid]
             }
         } catch {
