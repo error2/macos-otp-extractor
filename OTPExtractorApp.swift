@@ -43,12 +43,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private let logger = Logger(subsystem: "com.error.OTPExtractor", category: "AppDelegate")
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
-        // Log app bundle path for debugging Full Disk Access issues
-        if let bundlePath = Bundle.main.bundlePath as String? {
-            logger.info("App running from: \(bundlePath, privacy: .public)")
-            logger.info("ℹ️ If Full Disk Access fails, add this exact path to System Settings > Privacy & Security > Full Disk Access")
-        }
-
         // Setup notification center
         UNUserNotificationCenter.current().delegate = self
         requestNotificationPermission()
@@ -98,7 +92,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         hasPermission = otpManager?.hasFullDiskAccess() ?? false
 
         if hasPermission {
-            logger.info("Full Disk Access granted")
             otpManager?.startMonitoring { [weak self] in
                 DispatchQueue.main.async {
                     self?.setupMenu()
@@ -106,7 +99,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             }
             otpManager?.fetchLastOTP()
         } else {
-            logger.warning("Full Disk Access denied")
             showPermissionsAlert()
         }
 
@@ -114,7 +106,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     @objc func preferencesChanged() {
-        logger.info("Preferences changed, reloading...")
         otpManager?.reloadPreferences()
         setupMenu()
     }
@@ -220,7 +211,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             if PreferencesManager.shared.soundEnabled {
                 NSSound(named: "Submarine")?.play()
             }
-            logger.info("Copied code from history: \(code, privacy: .private)")
         }
     }
 
@@ -237,12 +227,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if response == .alertFirstButtonReturn {
             otpManager?.clearHistory()
             setupMenu()
-            logger.info("History cleared by user")
         }
     }
 
     @objc func fetchLastOTPManual() {
-        logger.info("Manual fetch triggered")
         let foundOTP = otpManager?.fetchLastOTP() ?? false
 
         if !foundOTP {
@@ -275,12 +263,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         preferencesWindow = window
         window.makeKeyAndOrderFront(nil)
-
-        logger.info("Preferences window opened")
     }
 
     @objc func quitApp() {
-        logger.info("Application quit by user")
         NSApplication.shared.terminate(self)
     }
 }
@@ -310,9 +295,6 @@ class OTPManager {
         self.dbPath = realHomeDir.appendingPathComponent(Constants.messagesDBPath).path
         self.statusItem = statusItem
 
-        logger.info("Real home directory: \(realHomeDir.path, privacy: .public)")
-        logger.info("Messages database path: \(self.dbPath, privacy: .public)")
-
         // Compile regex patterns once during initialization
         do {
             // Pattern for 4-9 digit OTP codes
@@ -322,8 +304,6 @@ class OTPManager {
             // Pattern for alphanumeric codes (6-8 characters, mix of letters and numbers)
             let alphanumericPattern = #"\b([A-Z0-9]{6,8})\b"#
             alphanumericOTPRegex = try NSRegularExpression(pattern: alphanumericPattern, options: [])
-
-            logger.info("OTP regex patterns compiled successfully")
         } catch {
             // This should never happen with hardcoded patterns, but handle it anyway
             fatalError("Failed to compile OTP regex patterns: \(error.localizedDescription)")
@@ -361,16 +341,7 @@ class OTPManager {
     /// Checks if the app has Full Disk Access to read the Messages database
     /// - Returns: `true` if the database is readable, `false` otherwise
     func hasFullDiskAccess() -> Bool {
-        let canRead = FileManager.default.isReadableFile(atPath: dbPath)
-        logger.info("Checking Full Disk Access for: \(self.dbPath, privacy: .public)")
-        logger.info("Can read Messages database: \(canRead)")
-
-        if !canRead {
-            logger.warning("⚠️ Full Disk Access DENIED. Grant permission in System Settings > Privacy & Security > Full Disk Access")
-            logger.warning("⚠️ After granting permission, RESTART the app")
-        }
-
-        return canRead
+        return FileManager.default.isReadableFile(atPath: dbPath)
     }
 
     // MARK: - Monitoring
@@ -382,7 +353,6 @@ class OTPManager {
 
         self.onUpdate = onUpdate
         self.lastCheckedMessageID = fetchLastMessageID()
-        logger.info("Monitoring started. Last message ID: \(self.lastCheckedMessageID)")
 
         // Setup file system monitoring using FSEvents
         setupFileMonitoring()
@@ -392,8 +362,6 @@ class OTPManager {
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.fetchLastOTP()
         }
-
-        logger.info("Timer polling started with interval: \(interval)s")
     }
 
     /// Sets up FSEvents-based file monitoring for the Messages database
@@ -426,8 +394,6 @@ class OTPManager {
 
         source.resume()
         fileMonitor = source
-
-        logger.info("File system monitoring setup successfully")
     }
 
     /// Stops all monitoring activities
@@ -436,7 +402,6 @@ class OTPManager {
         timer = nil
         fileMonitor?.cancel()
         fileMonitor = nil
-        logger.info("Monitoring stopped")
     }
 
     /// Reloads preferences and restarts monitoring if needed
@@ -453,14 +418,11 @@ class OTPManager {
         if otpHistory.count > maxSize {
             otpHistory = Array(otpHistory.prefix(maxSize))
         }
-
-        logger.info("Preferences reloaded")
     }
 
     /// Clears the OTP history
     func clearHistory() {
         otpHistory.removeAll()
-        logger.info("OTP history cleared")
     }
 
     // MARK: - Database Operations
@@ -537,8 +499,6 @@ class OTPManager {
             }
 
             if let info = otpInfoFound {
-                logger.info("OTP Found: \(info.code, privacy: .private) from \(info.sender, privacy: .public)")
-
                 // Add to history if not duplicate
                 if !otpHistory.contains(where: { $0.code == info.code && $0.date == info.date }) {
                     otpHistory.insert(info, at: 0)
@@ -603,7 +563,6 @@ class OTPManager {
 
         // Step 2: Try to find a numeric OTP code (4-9 digits)
         if let code = extractWithRegex(digitOTPRegex, from: text) {
-            logger.debug("Found numeric OTP: \(code, privacy: .private)")
             return code
         }
 
@@ -611,7 +570,6 @@ class OTPManager {
         if let code = extractWithRegex(alphanumericOTPRegex, from: text) {
             // Additional validation: must contain at least one digit
             if code.contains(where: { $0.isNumber }) {
-                logger.debug("Found alphanumeric OTP: \(code, privacy: .private)")
                 return code
             }
         }

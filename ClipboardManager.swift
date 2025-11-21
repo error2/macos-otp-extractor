@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import os.log
 
 /// Manages clipboard operations with security features
 class ClipboardManager {
@@ -14,7 +13,6 @@ class ClipboardManager {
 
     private var clearTimer: Timer?
     private var lastCopiedText: String?
-    private let logger = Logger(subsystem: "com.error.OTPExtractor", category: "Clipboard")
 
     private init() {}
 
@@ -29,7 +27,6 @@ class ClipboardManager {
         pasteboard.setString(text, forType: .string)
 
         lastCopiedText = text
-        logger.log("Text copied to clipboard (length: \(text.count))")
 
         // Cancel any existing timer
         clearTimer?.invalidate()
@@ -42,7 +39,6 @@ class ClipboardManager {
             clearTimer = Timer.scheduledTimer(withTimeInterval: actualDelay, repeats: false) { [weak self] _ in
                 self?.clearIfUnchanged()
             }
-            logger.log("Auto-clear scheduled for \(actualDelay) seconds")
         }
     }
 
@@ -53,9 +49,6 @@ class ClipboardManager {
         let pasteboard = NSPasteboard.general
         if let currentText = pasteboard.string(forType: .string), currentText == lastText {
             pasteboard.clearContents()
-            logger.log("Clipboard auto-cleared")
-        } else {
-            logger.log("Clipboard content changed by user, skipping auto-clear")
         }
 
         lastCopiedText = nil
@@ -65,6 +58,5 @@ class ClipboardManager {
     func cancelAutoClear() {
         clearTimer?.invalidate()
         clearTimer = nil
-        logger.log("Auto-clear cancelled")
     }
 }
