@@ -32,16 +32,30 @@ Messages database path: /Users/username/Library/Messages/chat.db
 
 **Verify Entitlements File:**
 
-Make sure `OTPExtractor.entitlements` contains:
+The `OTPExtractor.entitlements` file should be **minimal or empty** (just an empty `<dict>` element).
+
+**Correct entitlements file:**
 ```xml
-<key>com.apple.security.app-sandbox</key>
-<false/>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- No App Sandbox - Required for Full Disk Access -->
+</dict>
+</plist>
 ```
 
-And ensure this file is properly linked:
+**Important:** Even having `com.apple.security.app-sandbox` set to `false` can sometimes cause issues. The cleanest solution is an empty dict as shown above.
+
+Ensure the entitlements file is properly linked:
 1. Select project > Target > Build Settings
 2. Search for "Code Signing Entitlements"
 3. Should show: `OTPExtractor.entitlements`
+
+If you still have issues, try:
+1. Remove any existing entitlements in the Xcode UI (Signing & Capabilities tab)
+2. Verify the `.entitlements` file is truly minimal (as shown above)
+3. Clean build and rebuild
 
 ---
 
