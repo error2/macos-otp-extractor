@@ -43,6 +43,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private let logger = Logger(subsystem: "com.error.OTPExtractor", category: "AppDelegate")
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        // Log app bundle path for debugging Full Disk Access issues
+        if let bundlePath = Bundle.main.bundlePath as String? {
+            logger.info("App running from: \(bundlePath, privacy: .public)")
+            logger.info("ℹ️ If Full Disk Access fails, add this exact path to System Settings > Privacy & Security > Full Disk Access")
+        }
+
         // Setup notification center
         UNUserNotificationCenter.current().delegate = self
         requestNotificationPermission()
@@ -324,7 +330,16 @@ class OTPManager {
     /// Checks if the app has Full Disk Access to read the Messages database
     /// - Returns: `true` if the database is readable, `false` otherwise
     func hasFullDiskAccess() -> Bool {
-        return FileManager.default.isReadableFile(atPath: dbPath)
+        let canRead = FileManager.default.isReadableFile(atPath: dbPath)
+        logger.info("Checking Full Disk Access for: \(self.dbPath, privacy: .public)")
+        logger.info("Can read Messages database: \(canRead)")
+
+        if !canRead {
+            logger.warning("⚠️ Full Disk Access DENIED. Grant permission in System Settings > Privacy & Security > Full Disk Access")
+            logger.warning("⚠️ After granting permission, RESTART the app")
+        }
+
+        return canRead
     }
 
     // MARK: - Monitoring
