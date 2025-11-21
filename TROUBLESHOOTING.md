@@ -2,6 +2,49 @@
 
 ## Common Issues When Running from Xcode
 
+### Issue 0: App Looking in Wrong Directory (Sandbox Container Path)
+
+**Symptom:** Console shows:
+```
+Checking Full Disk Access for: /Users/username/Library/Containers/com.something.OTPExtractor/Data/Library/Messages/chat.db
+```
+
+**Cause:** The app is running in an App Sandbox, which redirects file system access to a container directory instead of the real home directory.
+
+**Solution: Disable App Sandbox in Xcode**
+
+1. **Select the project** in Xcode's navigator (left panel)
+2. **Select the OTPExtractor target**
+3. Go to **Signing & Capabilities** tab
+4. Find **"App Sandbox"** capability
+5. If it exists, **click the X button** to remove it completely
+6. **Clean build folder** (⌘⇧K)
+7. **Rebuild** (⌘B)
+8. **Run again** (⌘R)
+
+You should now see:
+```
+Real home directory: /Users/username
+Messages database path: /Users/username/Library/Messages/chat.db
+```
+
+**Alternative:** The latest code update includes a fix that detects the real home directory even when sandboxed, but it's still best to disable the sandbox for this app since it needs Full Disk Access anyway.
+
+**Verify Entitlements File:**
+
+Make sure `OTPExtractor.entitlements` contains:
+```xml
+<key>com.apple.security.app-sandbox</key>
+<false/>
+```
+
+And ensure this file is properly linked:
+1. Select project > Target > Build Settings
+2. Search for "Code Signing Entitlements"
+3. Should show: `OTPExtractor.entitlements`
+
+---
+
 ### Issue 1: "Full Disk Access denied" (Even Though It's Enabled)
 
 **Cause:** When you run the app from Xcode, it executes from a temporary DerivedData folder, not from `/Applications`. Full Disk Access permissions are tied to the **specific binary path**.

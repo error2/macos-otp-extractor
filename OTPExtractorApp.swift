@@ -304,9 +304,14 @@ class OTPManager {
     private let alphanumericOTPRegex: NSRegularExpression
 
     init(statusItem: NSStatusItem?) {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        self.dbPath = homeDir.appendingPathComponent(Constants.messagesDBPath).path
+        // Get the REAL user home directory, not the sandboxed container
+        // This is critical for accessing the Messages database
+        let realHomeDir = Self.getRealHomeDirectory()
+        self.dbPath = realHomeDir.appendingPathComponent(Constants.messagesDBPath).path
         self.statusItem = statusItem
+
+        logger.info("Real home directory: \(realHomeDir.path, privacy: .public)")
+        logger.info("Messages database path: \(self.dbPath, privacy: .public)")
 
         // Compile regex patterns once during initialization
         do {
@@ -323,6 +328,32 @@ class OTPManager {
             // This should never happen with hardcoded patterns, but handle it anyway
             fatalError("Failed to compile OTP regex patterns: \(error.localizedDescription)")
         }
+    }
+
+    /// Gets the real user home directory, bypassing App Sandbox container paths
+    /// - Returns: The actual user home directory URL
+    private static func getRealHomeDirectory() -> URL {
+        // Method 1: Try environment variable (most reliable)
+        if let homeEnv = ProcessInfo.processInfo.environment["HOME"] {
+            return URL(fileURLWithPath: homeEnv)
+        }
+
+        // Method 2: Use NSHomeDirectory() which bypasses sandbox
+        let homeDir = NSHomeDirectory()
+        if !homeDir.contains("/Containers/") {
+            return URL(fileURLWithPath: homeDir)
+        }
+
+        // Method 3: Parse from sandbox path (fallback)
+        // Sandbox path format: /Users/username/Library/Containers/...
+        let components = homeDir.split(separator: "/")
+        if components.count >= 3, components[0].isEmpty, components[1] == "Users" {
+            let username = String(components[2])
+            return URL(fileURLWithPath: "/Users/\(username)")
+        }
+
+        // Final fallback: Use FileManager (might be sandboxed)
+        return FileManager.default.homeDirectoryForCurrentUser
     }
 
     // MARK: - Permission Check
