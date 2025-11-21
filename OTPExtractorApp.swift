@@ -82,7 +82,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                               willPresent notification: UNNotification,
-                              completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+                              withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
     }
 
@@ -92,7 +92,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         hasPermission = otpManager?.hasFullDiskAccess() ?? false
 
         if hasPermission {
-            logger.info("Full Disk Access granted")
             otpManager?.startMonitoring { [weak self] in
                 DispatchQueue.main.async {
                     self?.setupMenu()
@@ -100,7 +99,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             }
             otpManager?.fetchLastOTP()
         } else {
-            logger.warning("Full Disk Access denied")
             showPermissionsAlert()
         }
 
@@ -108,7 +106,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     @objc func preferencesChanged() {
-        logger.info("Preferences changed, reloading...")
         otpManager?.reloadPreferences()
         setupMenu()
     }
@@ -214,7 +211,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             if PreferencesManager.shared.soundEnabled {
                 NSSound(named: "Submarine")?.play()
             }
-            logger.info("Copied code from history: \(code, privacy: .private)")
         }
     }
 
@@ -231,12 +227,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if response == .alertFirstButtonReturn {
             otpManager?.clearHistory()
             setupMenu()
-            logger.info("History cleared by user")
         }
     }
 
     @objc func fetchLastOTPManual() {
-        logger.info("Manual fetch triggered")
         let foundOTP = otpManager?.fetchLastOTP() ?? false
 
         if !foundOTP {
@@ -269,12 +263,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         preferencesWindow = window
         window.makeKeyAndOrderFront(nil)
-
-        logger.info("Preferences window opened")
     }
 
     @objc func quitApp() {
-        logger.info("Application quit by user")
         NSApplication.shared.terminate(self)
     }
 }
@@ -298,8 +289,10 @@ class OTPManager {
     private let alphanumericOTPRegex: NSRegularExpression
 
     init(statusItem: NSStatusItem?) {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        self.dbPath = homeDir.appendingPathComponent(Constants.messagesDBPath).path
+        // Get the REAL user home directory, not the sandboxed container
+        // This is critical for accessing the Messages database
+        let realHomeDir = Self.getRealHomeDirectory()
+        self.dbPath = realHomeDir.appendingPathComponent(Constants.messagesDBPath).path
         self.statusItem = statusItem
 
         // Compile regex patterns once during initialization
@@ -311,12 +304,36 @@ class OTPManager {
             // Pattern for alphanumeric codes (6-8 characters, mix of letters and numbers)
             let alphanumericPattern = #"\b([A-Z0-9]{6,8})\b"#
             alphanumericOTPRegex = try NSRegularExpression(pattern: alphanumericPattern, options: [])
-
-            logger.info("OTP regex patterns compiled successfully")
         } catch {
             // This should never happen with hardcoded patterns, but handle it anyway
             fatalError("Failed to compile OTP regex patterns: \(error.localizedDescription)")
         }
+    }
+
+    /// Gets the real user home directory, bypassing App Sandbox container paths
+    /// - Returns: The actual user home directory URL
+    private static func getRealHomeDirectory() -> URL {
+        // Method 1: Try environment variable (most reliable)
+        if let homeEnv = ProcessInfo.processInfo.environment["HOME"] {
+            return URL(fileURLWithPath: homeEnv)
+        }
+
+        // Method 2: Use NSHomeDirectory() which bypasses sandbox
+        let homeDir = NSHomeDirectory()
+        if !homeDir.contains("/Containers/") {
+            return URL(fileURLWithPath: homeDir)
+        }
+
+        // Method 3: Parse from sandbox path (fallback)
+        // Sandbox path format: /Users/username/Library/Containers/...
+        let components = homeDir.split(separator: "/")
+        if components.count >= 3, components[0].isEmpty, components[1] == "Users" {
+            let username = String(components[2])
+            return URL(fileURLWithPath: "/Users/\(username)")
+        }
+
+        // Final fallback: Use FileManager (might be sandboxed)
+        return FileManager.default.homeDirectoryForCurrentUser
     }
 
     // MARK: - Permission Check
@@ -336,7 +353,6 @@ class OTPManager {
 
         self.onUpdate = onUpdate
         self.lastCheckedMessageID = fetchLastMessageID()
-        logger.info("Monitoring started. Last message ID: \(self.lastCheckedMessageID)")
 
         // Setup file system monitoring using FSEvents
         setupFileMonitoring()
@@ -346,8 +362,6 @@ class OTPManager {
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.fetchLastOTP()
         }
-
-        logger.info("Timer polling started with interval: \(interval)s")
     }
 
     /// Sets up FSEvents-based file monitoring for the Messages database
@@ -380,8 +394,6 @@ class OTPManager {
 
         source.resume()
         fileMonitor = source
-
-        logger.info("File system monitoring setup successfully")
     }
 
     /// Stops all monitoring activities
@@ -390,7 +402,6 @@ class OTPManager {
         timer = nil
         fileMonitor?.cancel()
         fileMonitor = nil
-        logger.info("Monitoring stopped")
     }
 
     /// Reloads preferences and restarts monitoring if needed
@@ -407,14 +418,11 @@ class OTPManager {
         if otpHistory.count > maxSize {
             otpHistory = Array(otpHistory.prefix(maxSize))
         }
-
-        logger.info("Preferences reloaded")
     }
 
     /// Clears the OTP history
     func clearHistory() {
         otpHistory.removeAll()
-        logger.info("OTP history cleared")
     }
 
     // MARK: - Database Operations
@@ -429,8 +437,8 @@ class OTPManager {
             let messageTable = Table("message")
             let rowid = Expression<Int>("ROWID")
 
-            // Fixed: Use .first() instead of .first(where: { _ in true })
-            if let lastMessage = try db.prepare(messageTable.order(rowid.desc).limit(1)).first() {
+            // Fixed: Use makeIterator().next() for SQLite.swift Row sequence
+            if let lastMessage = try db.prepare(messageTable.order(rowid.desc).limit(1)).makeIterator().next() {
                 return lastMessage[rowid]
             }
         } catch {
@@ -491,8 +499,6 @@ class OTPManager {
             }
 
             if let info = otpInfoFound {
-                logger.info("OTP Found: \(info.code, privacy: .private) from \(info.sender, privacy: .public)")
-
                 // Add to history if not duplicate
                 if !otpHistory.contains(where: { $0.code == info.code && $0.date == info.date }) {
                     otpHistory.insert(info, at: 0)
@@ -557,7 +563,6 @@ class OTPManager {
 
         // Step 2: Try to find a numeric OTP code (4-9 digits)
         if let code = extractWithRegex(digitOTPRegex, from: text) {
-            logger.debug("Found numeric OTP: \(code, privacy: .private)")
             return code
         }
 
@@ -565,7 +570,6 @@ class OTPManager {
         if let code = extractWithRegex(alphanumericOTPRegex, from: text) {
             // Additional validation: must contain at least one digit
             if code.contains(where: { $0.isNumber }) {
-                logger.debug("Found alphanumeric OTP: \(code, privacy: .private)")
                 return code
             }
         }
